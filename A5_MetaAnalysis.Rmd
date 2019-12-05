@@ -1,0 +1,219 @@
+---
+title: "Assignment 5 - Meta-analysis of pitch in schizophrenia"
+author: "Katrine Nymann"
+date: "3/7/2019"
+output: 
+    md_document:
+        variant: markdown_github
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Building on the shoulders of giants: meta-analysis
+
+## Questions to be answered
+
+1. What is the current evidence for distinctive vocal patterns in schizophrenia? Report how many papers report quantitative estimates, comment on what percentage of the overall studies reviewed they represent (see PRISMA chart) your method to analyze them, the estimated effect size of the difference (mean effect size and standard error) and forest plots representing it. N.B. Only measures of pitch mean and pitch sd are required for the assignment. Feel free to ignore the rest (although pause behavior looks interesting, if you check my article).
+
+2. Do the results match your own analysis from Assignment 3? If you add your results to the meta-analysis, do the estimated effect sizes change? Report the new estimates and the new forest plots.
+
+3. Assess the quality of the literature: report and comment on heterogeneity of the studies (tau, I2), on publication bias (funnel plot), and on influential studies.
+
+Packages etc
+```{r}
+#Load packages
+library(tidyverse, pacman)
+pacman::p_load(metafor)
+pacman::p_load(lme4)
+pacman::p_load(lmerTest)
+```
+
+## Tips on the process to follow:
+
+- Download the data on all published articles analyzing voice in schizophrenia and the prisma chart as reference of all articles found and reviewed
+```{r}
+# We load the data
+data <- read.delim("Matrix_MetaAnalysis_Diagnosis_updated290719.csv", sep =";")
+```
+d is the difference in standard deviations between the two groups. (pooled standard deviation?)
+A standardized mean difference. 
+Escalc from metafor package
+similar to hedges g. We can use whatever?
+
+
+- Look through the dataset to find out which columns to use, and if there is any additional information written as comments (real world data is always messy!).
+    * Hint: PITCH_F0M and PITCH_F0SD group of variables are what you need
+    * Hint: Make sure you read the comments in the columns: `pitch_f0_variability`, `frequency`, `Title`,  `ACOUST_ANA_DESCR`, `DESCRIPTION`, and `COMMENTS`
+    
+ 
+HC = Healthy control
+SZ = schitzophrenic
+M = mean (participant level) And we also have for the group level
+SD = Standard deviation
+F0 = pith --> the dominant one.
+Pitch is the fundamental frequency. The component of the vibrations with the biggest amplitude.
+
+PITCH_F0_SZ_M = mean -->
+We also want to know across groups. -->
+PITCH_F0SD_SZ_M --> pitch variability
+```{r}
+#we subset the data we need
+data_2 <- select(data, StudyID, frequency, Title, SAMPLE_SIZE_SZ, SAMPLE_SIZE_HC, pitch_f0_variability, PITCH_F0SD_HC_M, PITCH_F0SD_HC_SD, PITCH_F0SD_SZ_SD, PITCH_F0SD_SZ_M, PITCH_F0_HC_M, PITCH_F0_HC_SD, PITCH_F0_SZ_SD, PITCH_F0_SZ_M, TYPE_OF_TASK)
+```
+    
+- Following the procedure in the slides calculate effect size and standard error of the effect size per each study. N.B. we focus on pitch mean and pitch standard deviation.
+ . first try using lmer (to connect to what you know of mixed effects models)
+ . then use rma() (to get some juicy additional statistics)
+```{r}
+data_2 <- data_2[-c(58), ]
+
+#We want to have the sum of sample size of each 
+sample_size <- data_2 %>% filter(StudyID == 1 | StudyID == 5 |StudyID == 11 | StudyID == 18 | StudyID == 28 | StudyID == 50) %>% group_by(StudyID) %>% summarise(SAMPLE_SIZE_SZ, SAMPLE_SIZE_HC)  
+sum(sample_size$SAMPLE_SIZE_SZ)
+sum(sample_size$SAMPLE_SIZE_HC)
+
+
+PitchMeanES <- metafor::escalc('SMD', #Standardized mean difference = Cohen's d
+                               n1i = SAMPLE_SIZE_SZ, n2i = SAMPLE_SIZE_HC, 
+                               m1i = PITCH_F0_SZ_M, m2i = PITCH_F0_HC_M, 
+                               sd1i = PITCH_F0_SZ_SD, sd2i = PITCH_F0_HC_SD, data = data_2)
+
+#vi is a measure of uncertainty (sd^2)
+#y is the mean estimated cohen's d wihtin study 
+
+#How do we include that different studies might look at different effects? Heterogeneity. 
+model_ES <- lmer(yi ~ 1 + (1|StudyID), PitchMeanES, 
+    # y is the outcome for i in nrow. We want the mean --> therefore 1 to get the intercept. 
+     weights = 1/vi, REML=F, 
+    #the weight is a positive weight. The bigger the variance, the smaller the decimal
+     control = lmerControl( check.nobs.vs.nlev="ignore", 
+                            check.nobs.vs.nRE="ignore"))
+summary(model_ES)
+
+#A column is called task. We should add 1+Task(1+Task|Study)
+#how does the second task differ from the first? How does the third task differ from the first? A difference of effect size. The difference in the difference between control and sz when looking at second in relation the first. Not concerned about the overall effect size
+
+#0 + Task +(0 + Task|Study) --> for this there will be different intercepts. The estimate by condition. Not the estimate of the difference. 
+
+model_ES1 <- lmer(yi ~ 1 + TYPE_OF_TASK + (1 + TYPE_OF_TASK|StudyID), PitchMeanES, 
+    # y is the outcome for i in nrow. We want the mean --> therefore 1 to get the intercept. 
+     weights = 1/vi, REML=F, 
+    #the weight is a positive weight. The bigger the variance, the smaller the decimal
+     control = lmerControl( check.nobs.vs.nlev="ignore", 
+                            check.nobs.vs.nRE="ignore"))
+summary(model_ES1)
+
+
+
+```
+ 
+
+- Build a forest plot of the results (forest(model))
+```{r}
+### We want to make a forest model ####
+#We need to make to model into this format
+Model <- rma(yi, vi, data = PitchMeanES, mods = ~ TYPE_OF_TASK, slab=StudyID) #rma and lmer is the same
+Model
+## Since the moderator with tyoes of task wasn't significant we will do the model without it
+Model <- rma(yi, vi, data = PitchMeanES, slab=StudyID)
+
+Model
+#Then we plot
+forest(Model)
+```
+
+ 
+- Go back to Assignment 3, add your own study to the data table, and re-run meta-analysis. Do the results change?
+```{r}
+#We will load our data from Assignment 3
+assignment_data <- read.csv("C:/Users/katri/OneDrive/Dokumenter/Cognitive Science/Experimental_Methods_III/Assignment_3/df_2.csv")
+
+#We need to have unique study IDs as a column in the new summed up df
+ass_3 <- data.frame(StudyID = c(51, 52, 53, 54))
+#We need to have sample size in a dataframe
+ass_3$SAMPLE_SIZE_SZ <- c(34, 23, 19, 29)
+ass_3$SAMPLE_SIZE_HC <- c(36, 23, 28, 29)
+
+#The mean and standard deviations of each studies
+df2_healthy<-subset(assignment_data,diagnosis==0)
+df2_schiz<-subset(assignment_data,diagnosis==1)
+
+#We want mean of the frequency and standard deviation of the mean
+d_H<-df2_healthy %>% group_by(study) %>% dplyr::summarize(Mean= mean(mean_frequency), sd = sd(mean_frequency), Mean_sd = mean(sd_frequency), sd_sd = sd(sd_frequency))
+
+d_S<-df2_schiz %>% group_by(study) %>% dplyr::summarize(Mean = mean(mean_frequency), sd = sd(mean_frequency), Mean_sd = mean(sd_frequency), sd_sd = sd(sd_frequency))
+
+### Mean and standard deviations of the mean_frequency
+ass_3$PITCH_F0_HC_M <-d_H$Mean
+ass_3$PITCH_F0_SZ_M <-d_S$Mean
+
+ass_3$PITCH_F0_HC_SD <- d_H$sd
+
+ass_3$PITCH_F0_SZ_SD <- d_S$sd
+
+#### Mean and standard deviations of all standard deviations
+
+#Mean of the sd_frequencies for HC
+ass_3$PITCH_F0SD_HC_M <- d_H$Mean_sd
+#sd of the sd_frequencies for HC
+ass_3$PITCH_F0SD_HC_SD <- d_H$sd_sd
+#sd of the sd_frequencies for SZ
+ass_3$PITCH_F0SD_SZ_SD <- d_S$sd_sd
+#Mean of the sd_frequencies for SZ
+ass_3$PITCH_F0SD_SZ_M <- d_S$Mean_sd
+
+## We ad this to the our data from before
+dd <- merge(data_2, ass_3, all = TRUE)
+```
+## We want to compare this with our results now
+```{r}
+#We calculate Cohen's d
+PitchMeanES <- metafor::escalc('SMD', #Standardized mean difference = Cohen's d
+                               n1i = SAMPLE_SIZE_SZ, n2i = SAMPLE_SIZE_HC, 
+                               m1i = PITCH_F0_SZ_M, m2i = PITCH_F0_HC_M, 
+                               sd1i = PITCH_F0_SZ_SD, sd2i = PITCH_F0_HC_SD, data = ass_3)
+
+#vi is a measure of uncertainty (sd^2)
+#y is the mean estimated cohen's d wihtin study 
+
+#How do we include that different studies might look at different effects? Heterogeneity. 
+model_ass_3 <- rma(yi, vi, data = PitchMeanES, slab=StudyID)
+model_ass_3
+```
+
+
+
+We will rerun analysis now with Assignment 3
+```{r}
+# We calculate Cohen's D
+dd <- metafor::escalc('SMD', #Standardized mean difference = Cohen's d
+                               n1i = SAMPLE_SIZE_SZ, n2i = SAMPLE_SIZE_HC, 
+                               m1i = PITCH_F0_SZ_M, m2i = PITCH_F0_HC_M, 
+                               sd1i = PITCH_F0_SZ_SD, sd2i = PITCH_F0_HC_SD, data = dd)
+
+#We need to make to model into this format
+Model_dd <- rma(yi, vi, data = dd, slab=StudyID) #rma and lmer is the same
+Model_dd
+#Then we plot
+forest(Model_dd)
+
+```
+
+
+- We make a funnel plot to look at publication biases
+```{r}
+#We also want to make a funnel plot which plots effect size against standard error
+funnel(Model_dd, main = "Random-Effects Model", xlab = "Standardized Mean Difference")
+
+```
+## We test for influential studies
+```{r}
+inf <- influence(Model_dd)
+print(inf)
+summary(inf)
+plot(inf)
+
+```
+Link to the report: https://docs.google.com/document/d/1bqmqCdRxM9cL7cjE-gZww4wpaeBAZcWJndLYK3LvHdA/edit?usp=sharing 
